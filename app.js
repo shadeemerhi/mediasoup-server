@@ -94,9 +94,9 @@ connections.on("connection", async (socket) => {
     socket.on("disconnect", () => {
         // do some cleanup
         console.log("peer disconnected");
-        consumers = removeItems(consumers, socket.id, 'consumer')
-        producers = removeItems(producers, socket.id, 'producer')
-        transports = removeItems(transports, socket.id, 'transport')
+        consumers = removeItems(consumers, socket.id, "consumer");
+        producers = removeItems(producers, socket.id, "producer");
+        transports = removeItems(transports, socket.id, "transport");
 
         // const { roomName } = peers[socket.id]
         // delete peers[socket.id]
@@ -208,7 +208,7 @@ connections.on("connection", async (socket) => {
 
     const addProducer = (producer, roomName) => {
         producers = [...producers, { socketId: socket.id, producer, roomName }];
-        console.log('INSIDE ADD PRODUCER', producers);
+        console.log("INSIDE ADD PRODUCER", producers);
 
         peers[socket.id] = {
             ...peers[socket.id],
@@ -292,7 +292,7 @@ connections.on("connection", async (socket) => {
             // add producer to the producers array
             const { roomName } = peers[socket.id];
 
-            console.log('ADDING PTRODUCE');
+            console.log("ADDING PTRODUCE");
             addProducer(producer, roomName);
 
             informConsumers(roomName, socket.id, producer.id);
@@ -327,82 +327,166 @@ connections.on("connection", async (socket) => {
     );
 
     // New
-    socket.on("consumeHost", async ({ rtpCapabilities, transportId }, callback) => {
+    socket.on(
+        "consumeHost",
+        async ({ rtpCapabilities, transportId }, callback) => {
+            try {
+                const { roomName } = peers[socket.id];
+                const router = rooms[roomName].router;
+                const consumerTransport = transports.find(
+                    (transportData) =>
+                        transportData.consumer &&
+                        transportData?.transport?.id == transportId
+                )?.transport;
 
-      try {        
-        const { roomName } = peers[socket.id];
-        const router = rooms[roomName].router;
-        const consumerTransport = transports.find(
-            (transportData) =>
-                transportData.consumer &&
-                transportData?.transport?.id == transportId
-        )?.transport;
+                console.log("HERE IS TRANSPORT ID", transportId);
 
-        // Only one producer (admin)
-        const producer = producers[0].producer;
-        console.log('HERE IS ADMIN PRODUCER', producer, rtpCapabilities);
+                // Only one producer (admin)
+                const producer = producers[0].producer;
+                // console.log('HERE IS ADMIN PRODUCER', producer.kind, rtpCapabilities);
 
+                if (
+                    router.canConsume({
+                        producerId: producer.id,
+                        rtpCapabilities,
+                    })
+                ) {
+                    const consumer = await consumerTransport.consume({
+                        producerId: producer.id,
+                        rtpCapabilities,
+                        paused: true,
+                    });
 
-        if (
-            router.canConsume({
-                producerId: producer.id,
-                rtpCapabilities,
-            })
-        ) {
-            const consumer = await consumerTransport.consume({
-                producerId: producer.id,
-                rtpCapabilities,
-                paused: true,
-            });
+                    consumer.on("transportclose", () => {
+                        console.log("transport close from consumer");
+                    });
 
-            consumer.on("transportclose", () => {
-                console.log("transport close from consumer");
-            });
+                    consumer.on("producerclose", () => {
+                        console.log(
+                            "producer of consumer closed",
+                            remoteProducerId
+                        );
+                        socket.emit("producer-closed", { remoteProducerId });
 
-            consumer.on("producerclose", () => {
-                console.log("producer of consumer closed", remoteProducerId);
-                socket.emit("producer-closed", { remoteProducerId });
+                        consumerTransport.close([]);
+                        consumer.close();
+                    });
 
-                consumerTransport.close([]);
-                consumer.close();
-            });
+                    addConsumer(consumer, roomName);
 
-            addConsumer(consumer, roomName);
+                    // from the consumer extract the following params
+                    // to send back to the Client
+                    const params = {
+                        id: consumer.id,
+                        // producerId: remoteProducerId,
+                        producerId: producer.id,
+                        kind: consumer.kind,
+                        rtpParameters: consumer.rtpParameters,
+                        serverConsumerId: consumer.id,
+                    };
 
-            // from the consumer extract the following params
-            // to send back to the Client
-            const params = {
-                id: consumer.id,
-                // producerId: remoteProducerId,
-                producerId: adminProducer.id,
-                kind: consumer.kind,
-                rtpParameters: consumer.rtpParameters,
-                serverConsumerId: consumer.id,
-            };
+                    let adminSocket;
+                    for (const socket in peers) {
+                        if (peers[socket].peerDetails.isAdmin) {
+                            adminSocket = peers[socket].socket;
+                        }
+                    }
+                    console.log("HERE IS ADMIN SOCKET", adminSocket.id);
+                    // adminSocket.emit("new-consumer");
+                    connections.to(roomName).emit("new-consumer");
 
-            let adminSocket;
-            for (const socket in peers) {
-                if (peers[socket].peerDetails.isAdmin) {
-                    adminSocket = peers[socket].socket;
+                    // send the parameters to the client
+                    callback({ params });
                 }
+                console.log("THIS IS HAPPENING");
+            } catch (error) {
+                console.log("CONSUME EVENT ERROR", error.message);
+                callback({
+                    params: {
+                        error: error,
+                    },
+                });
             }
-            console.log('HERE IS ADMIN SOCKET', adminSocket.id);
-            // adminSocket.emit("new-consumer");
-            connections.to(roomName).emit('new-consumer');
-
-            // send the parameters to the client
-            callback({ params });
         }
-        console.log('THIS IS HAPPENING');
-      } catch (error) {
-        console.log("CONSUME EVENT ERROR", error.message);
-        callback({
-            params: {
-                error: error,
-            },
-        });
-      }
-    });
+    );
+    socket.on(
+        "consume",
+        async (
+            { rtpCapabilities, remoteProducerId, serverConsumerTransportId },
+            callback
+        ) => {
+            try {
+                const { roomName } = peers[socket.id];
+                const router = rooms[roomName].router;
+                let consumerTransport = transports.find(
+                    (transportData) =>
+                        transportData.consumer &&
+                        transportData?.transport?.id ==
+                            serverConsumerTransportId
+                )?.transport;
+
+                // check if the router can consume the specified producer
+                if (
+                    router.canConsume({
+                        producerId: remoteProducerId,
+                        rtpCapabilities,
+                    })
+                ) {
+                    console.log("REMOTE PRODUCER ID", remoteProducerId);
+                    // transport can now consume and return a consumer
+                    const consumer = await consumerTransport.consume({
+                        producerId: remoteProducerId,
+                        rtpCapabilities,
+                        paused: true,
+                    });
+
+                    consumer.on("transportclose", () => {
+                        console.log("transport close from consumer");
+                    });
+
+                    consumer.on("producerclose", () => {
+                        console.log(
+                            "producer of consumer closed",
+                            remoteProducerId
+                        );
+                        // socket.emit("producer-closed", { remoteProducerId });
+                        consumer.close();
+                    });
+
+                    addConsumer(consumer, roomName);
+
+                    // from the consumer extract the following params
+                    // to send back to the Client
+                    const params = {
+                        id: consumer.id,
+                        producerId: remoteProducerId,
+                        kind: consumer.kind,
+                        rtpParameters: consumer.rtpParameters,
+                        serverConsumerId: consumer.id,
+                    };
+
+                    let adminSocket;
+                    for (const socket in peers) {
+                        if (peers[socket].peerDetails.isAdmin) {
+                            adminSocket = peers[socket].socket;
+                        }
+                    }
+                    adminSocket.emit("new-consumer");
+                    console.log("HERE IS ADMIN SOCKET", adminSocket);
+
+                    // send the parameters to the client
+                    callback({ params });
+                }
+            } catch (error) {
+                console.log("CONSUME EVENT ERROR", error.message);
+                callback({
+                    params: {
+                        error: error,
+                    },
+                });
+            }
+        }
+    );
 
     socket.on("consumer-resume", async ({ serverConsumerId }) => {
         console.log("consumer resume", serverConsumerId);
@@ -411,6 +495,27 @@ connections.on("connection", async (socket) => {
         );
         await consumer.resume();
     });
+
+    // New
+    socket.on('pauseProducer', async ({ producerId }) => {
+        const producer = producers.find(p => p.producer.id === producerId).producer;
+        console.log('PAUSING PRODUCER', producer.id);
+        
+        if (!producer) {
+            // handle error
+        }
+        await producer.pause();
+    });
+    
+    socket.on('resumeProducer', async ({ producerId }) => {
+        const producer = producers.find(p => p.producer.id === producerId).producer;
+        console.log('RESUMING PRODUCER', producer.id);
+        if (!producer) {
+            // handle error
+        }
+
+        await producer.resume();
+    })
 });
 
 const createWebRtcTransport = async (router) => {
