@@ -73,8 +73,8 @@ const mediaCodecs = [
 ];
 
 connections.on("connection", async (socket) => {
-    // const id = socket.handshake.query.id;
-    // socket.join(id);
+    const id = socket.handshake.query.id;
+    socket.join(id);
     console.log("HERE IS SOCKET ID", socket.id);
     socket.emit("connection-success", {
         socketId: socket.id,
@@ -99,7 +99,7 @@ connections.on("connection", async (socket) => {
         transports = removeItems(transports, socket.id, "transport");
 
         // const { roomName } = peers[socket.id]
-        // delete peers[socket.id]
+        delete peers[socket.id]
 
         // // remove socket from room
         // rooms[roomName] = {
@@ -246,19 +246,13 @@ connections.on("connection", async (socket) => {
     });
 
     const informConsumers = (roomName, socketId, id) => {
-        console.log(`just joined, id ${id} ${roomName}, ${socketId}`);
-        // A new producer just joined
-        // let all consumers to consume this producer
-        producers.forEach((producerData) => {
-            if (
-                producerData.socketId !== socketId &&
-                producerData.roomName === roomName
-            ) {
-                const producerSocket = peers[producerData.socketId].socket;
-                // use socket to send producer id to producer
-                producerSocket.emit("new-producer", { producerId: id });
-            }
-        });
+        console.log(`informConsumers - just joined, id ${id} ${roomName}, ${socketId}`);
+
+        const peerSocket = Object.keys(peers).filter(peer => !peers[peer].peerDetails.isAdmin).map(peer => peers[peer])[0].socket;
+
+        if (peerSocket) {
+            peerSocket.emit('new-producer', { producerId: id })
+        }
     };
 
     const getTransport = (socketId) => {
@@ -449,7 +443,7 @@ connections.on("connection", async (socket) => {
                             "producer of consumer closed",
                             remoteProducerId
                         );
-                        // socket.emit("producer-closed", { remoteProducerId });
+                        socket.emit("producer-closed", { remoteProducerId });
                         consumer.close();
                     });
 
