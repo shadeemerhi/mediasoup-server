@@ -515,6 +515,20 @@ connections.on("connection", async (socket) => {
         }
 
         await producer.resume();
+    });
+
+    socket.on('closeProducer', async ({ producerId }, callback) => {
+        const producer = producers.find(p => p.producer.id === producerId).producer;
+        if (!producer) {
+            callback({error: 'Producer not found'});
+        }
+
+        producer.close();
+
+        // Remove producer
+        console.log('PRODUCERS BEFORE', producers, producers.length);
+        producers = producers.filter(p => p.producer.id !== producerId);
+        console.log('PRODUCERS AFTER', producers, producers.length);
     })
 });
 
