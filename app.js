@@ -465,6 +465,7 @@ connections.on("connection", async (socket) => {
                         kind: consumer.kind,
                         rtpParameters: consumer.rtpParameters,
                         serverConsumerId: consumer.id,
+                        producerPaused: consumer.producerPaused
                     };
 
                     let adminSocket;
