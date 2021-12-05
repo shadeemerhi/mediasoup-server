@@ -37,8 +37,6 @@ let transports = [];
 let producers = [];
 let consumers = [];
 
-let adminProducer;
-
 const createWorker = async () => {
     worker = await mediasoup.createWorker({
         rtcMinPort: 10000,
@@ -248,7 +246,7 @@ connections.on("connection", async (socket) => {
     const informConsumers = (roomName, socketId, id) => {
         console.log(`informConsumers - just joined, id ${id} ${roomName}, ${socketId}`);
 
-        const peerSocket = Object.keys(peers).filter(peer => !peers[peer].peerDetails.isAdmin).map(peer => peers[peer])[0].socket;
+        const peerSocket = Object.keys(peers).filter(peer => !peers[peer].peerDetails.isAdmin).map(peer => peers[peer])[0]?.socket;
 
         if (peerSocket) {
             peerSocket.emit('new-producer', { producerId: id })
@@ -281,7 +279,6 @@ connections.on("connection", async (socket) => {
                 kind,
                 rtpParameters,
             });
-            adminProducer = producer;
 
             // add producer to the producers array
             const { roomName } = peers[socket.id];
@@ -358,9 +355,10 @@ connections.on("connection", async (socket) => {
                     consumer.on("producerclose", () => {
                         console.log(
                             "producer of consumer closed",
-                            remoteProducerId
+                            remoteProducerId,
+                            consumer.id,
                         );
-                        socket.emit("producer-closed", { remoteProducerId });
+                        socket.emit("producer-closed", { consumerId: consumer.id, remoteProducerId });
 
                         consumerTransport.close([]);
                         consumer.close();
@@ -443,9 +441,19 @@ connections.on("connection", async (socket) => {
                             "producer of consumer closed",
                             remoteProducerId
                         );
-                        socket.emit("producer-closed", { remoteProducerId });
+                        socket.emit("producer-closed", { consumerId: consumer.id, remoteProducerId });
                         consumer.close();
                     });
+
+                    consumer.on('producerpause', () => {
+                        console.log('producer was paused hehehe');
+                        socket.emit('consumer-paused', { consumerId: consumer.id });
+                    });
+
+                    consumer.on('producerresume', () => {
+                        console.log('producer was resumed hehehe');
+                        socket.emit('consumer-resumed', { consumerId: consumer.id });
+                    })
 
                     addConsumer(consumer, roomName);
 
@@ -491,7 +499,7 @@ connections.on("connection", async (socket) => {
     });
 
     // New
-    socket.on('pauseProducer', async ({ producerId }) => {
+    socket.on('pauseProducer', async ({ producerId }, callback) => {
         const producer = producers.find(p => p.producer.id === producerId).producer;
         console.log('PAUSING PRODUCER', producer.id);
         
@@ -499,9 +507,10 @@ connections.on("connection", async (socket) => {
             // handle error
         }
         await producer.pause();
+        callback();
     });
     
-    socket.on('resumeProducer', async ({ producerId }) => {
+    socket.on('resumeProducer', async ({ producerId }, callback) => {
         const producer = producers.find(p => p.producer.id === producerId).producer;
         console.log('RESUMING PRODUCER', producer.id);
         if (!producer) {
@@ -509,6 +518,7 @@ connections.on("connection", async (socket) => {
         }
 
         await producer.resume();
+        callback();
     });
 
     socket.on('closeProducer', async ({ producerId }, callback) => {
