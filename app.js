@@ -89,27 +89,31 @@ connections.on("connection", async (socket) => {
         return items;
     };
 
-    socket.on("disconnect", () => {
-        // do some cleanup
-        console.log("peer disconnected");
-        consumers = removeItems(consumers, socket.id, "consumer");
-        producers = removeItems(producers, socket.id, "producer");
-        transports = removeItems(transports, socket.id, "transport");
+    socket.on("join-public-room", ({ userId, roomName, isAdmin }) => {
+        console.log('JOINING PUBLIC ROOM', roomName, userId);
+        socket.join(roomName);
 
-        // const { roomName } = peers[socket.id]
-        delete peers[socket.id]
+        // Emit to all users in the public room
+        socket.to(roomName).emit('joined-public-room', { userId });
+    });
 
-        // // remove socket from room
-        // rooms[roomName] = {
-        //   router: rooms[roomName].router,
-        //   peers: rooms[roomName].peers.filter(socketId => socketId !== socket.id)
-        // }
+    socket.on("leave-public-room", ({ userId ,roomName }) => {
+        console.log('LEAVING PUBLIC ROOM', roomName, userId);
+        socket.leave(roomName);
+        socket.to(roomName).emit('left-public-room', { userId });
     });
 
     socket.on("joinRoom", async ({ roomName, isAdmin }, callback) => {
         console.log("JOIN ROOM EVENT", roomName);
 
         socket.join(roomName);
+
+        // Let admin know that user joined private room
+        // Will later find admin socket somehow
+        // For now, emit to room
+        socket.to(roomName).emit('joined-private-room')
+
+
         // create Router if it does not exist
         // const router1 = rooms[roomName] && rooms[roomName].get('data').router || await createRoom(roomName, socket.id)
         const router1 = await createRoom(roomName, socket.id);
@@ -244,12 +248,16 @@ connections.on("connection", async (socket) => {
     });
 
     const informConsumers = (roomName, socketId, id) => {
-        console.log(`informConsumers - just joined, id ${id} ${roomName}, ${socketId}`);
+        console.log(
+            `informConsumers - just joined, id ${id} ${roomName}, ${socketId}`
+        );
 
-        const peerSocket = Object.keys(peers).filter(peer => !peers[peer].peerDetails.isAdmin).map(peer => peers[peer])[0]?.socket;
+        const peerSocket = Object.keys(peers)
+            .filter((peer) => !peers[peer].peerDetails.isAdmin)
+            .map((peer) => peers[peer])[0]?.socket;
 
         if (peerSocket) {
-            peerSocket.emit('new-producer', { producerId: id })
+            peerSocket.emit("new-producer", { producerId: id });
         }
     };
 
@@ -317,90 +325,6 @@ connections.on("connection", async (socket) => {
         }
     );
 
-    // New
-    socket.on(
-        "consumeHost",
-        async ({ rtpCapabilities, transportId }, callback) => {
-            try {
-                const { roomName } = peers[socket.id];
-                const router = rooms[roomName].router;
-                const consumerTransport = transports.find(
-                    (transportData) =>
-                        transportData.consumer &&
-                        transportData?.transport?.id == transportId
-                )?.transport;
-
-                console.log("HERE IS TRANSPORT ID", transportId);
-
-                // Only one producer (admin)
-                const producer = producers[0].producer;
-                // console.log('HERE IS ADMIN PRODUCER', producer.kind, rtpCapabilities);
-
-                if (
-                    router.canConsume({
-                        producerId: producer.id,
-                        rtpCapabilities,
-                    })
-                ) {
-                    const consumer = await consumerTransport.consume({
-                        producerId: producer.id,
-                        rtpCapabilities,
-                        paused: true,
-                    });
-
-                    consumer.on("transportclose", () => {
-                        console.log("transport close from consumer");
-                    });
-
-                    consumer.on("producerclose", () => {
-                        console.log(
-                            "producer of consumer closed",
-                            remoteProducerId,
-                            consumer.id,
-                        );
-                        socket.emit("producer-closed", { consumerId: consumer.id, remoteProducerId });
-
-                        consumerTransport.close([]);
-                        consumer.close();
-                    });
-
-                    addConsumer(consumer, roomName);
-
-                    // from the consumer extract the following params
-                    // to send back to the Client
-                    const params = {
-                        id: consumer.id,
-                        // producerId: remoteProducerId,
-                        producerId: producer.id,
-                        kind: consumer.kind,
-                        rtpParameters: consumer.rtpParameters,
-                        serverConsumerId: consumer.id,
-                    };
-
-                    let adminSocket;
-                    for (const socket in peers) {
-                        if (peers[socket].peerDetails.isAdmin) {
-                            adminSocket = peers[socket].socket;
-                        }
-                    }
-                    console.log("HERE IS ADMIN SOCKET", adminSocket.id);
-                    // adminSocket.emit("new-consumer");
-                    connections.to(roomName).emit("new-consumer");
-
-                    // send the parameters to the client
-                    callback({ params });
-                }
-                console.log("THIS IS HAPPENING");
-            } catch (error) {
-                console.log("CONSUME EVENT ERROR", error.message);
-                callback({
-                    params: {
-                        error: error,
-                    },
-                });
-            }
-        }
-    );
     socket.on(
         "consume",
         async (
@@ -441,19 +365,26 @@ connections.on("connection", async (socket) => {
                             "producer of consumer closed",
                             remoteProducerId
                         );
-                        socket.emit("producer-closed", { consumerId: consumer.id, remoteProducerId });
+                        socket.emit("producer-closed", {
+                            consumerId: consumer.id,
+                            remoteProducerId,
+                        });
                         consumer.close();
                     });
 
-                    consumer.on('producerpause', () => {
-                        console.log('producer was paused hehehe');
-                        socket.emit('consumer-paused', { consumerId: consumer.id });
+                    consumer.on("producerpause", () => {
+                        console.log("producer was paused hehehe");
+                        socket.emit("consumer-paused", {
+                            consumerId: consumer.id,
+                        });
                     });
 
-                    consumer.on('producerresume', () => {
-                        console.log('producer was resumed hehehe');
-                        socket.emit('consumer-resumed', { consumerId: consumer.id });
-                    })
+                    consumer.on("producerresume", () => {
+                        console.log("producer was resumed hehehe");
+                        socket.emit("consumer-resumed", {
+                            consumerId: consumer.id,
+                        });
+                    });
 
                     addConsumer(consumer, roomName);
 
@@ -465,7 +396,7 @@ connections.on("connection", async (socket) => {
                         kind: consumer.kind,
                         rtpParameters: consumer.rtpParameters,
                         serverConsumerId: consumer.id,
-                        producerPaused: consumer.producerPaused
+                        producerPaused: consumer.producerPaused,
                     };
 
                     let adminSocket;
@@ -500,20 +431,24 @@ connections.on("connection", async (socket) => {
     });
 
     // New
-    socket.on('pauseProducer', async ({ producerId }, callback) => {
-        const producer = producers.find(p => p.producer.id === producerId).producer;
-        console.log('PAUSING PRODUCER', producer.id);
-        
+    socket.on("pauseProducer", async ({ producerId }, callback) => {
+        const producer = producers.find(
+            (p) => p.producer.id === producerId
+        ).producer;
+        console.log("PAUSING PRODUCER", producer.id);
+
         if (!producer) {
             // handle error
         }
         await producer.pause();
         callback();
     });
-    
-    socket.on('resumeProducer', async ({ producerId }, callback) => {
-        const producer = producers.find(p => p.producer.id === producerId).producer;
-        console.log('RESUMING PRODUCER', producer.id);
+
+    socket.on("resumeProducer", async ({ producerId }, callback) => {
+        const producer = producers.find(
+            (p) => p.producer.id === producerId
+        ).producer;
+        console.log("RESUMING PRODUCER", producer.id);
         if (!producer) {
             // handle error
         }
@@ -522,19 +457,54 @@ connections.on("connection", async (socket) => {
         callback();
     });
 
-    socket.on('closeProducer', async ({ producerId }, callback) => {
-        const producer = producers.find(p => p.producer.id === producerId).producer;
+    socket.on("closeProducer", async ({ producerId }, callback) => {
+        const producer = producers.find(
+            (p) => p.producer.id === producerId
+        ).producer;
         if (!producer) {
-            callback({error: 'Producer not found'});
+            callback({ error: "Producer not found" });
         }
 
         producer.close();
 
         // Remove producer
-        console.log('PRODUCERS BEFORE', producers, producers.length);
-        producers = producers.filter(p => p.producer.id !== producerId);
-        console.log('PRODUCERS AFTER', producers, producers.length);
-    })
+        console.log("PRODUCERS BEFORE", producers, producers.length);
+        producers = producers.filter((p) => p.producer.id !== producerId);
+        console.log("PRODUCERS AFTER", producers, producers.length);
+    });
+
+    socket.on("leave-private-room", ({ roomName }) => {
+        console.log(
+            "user left private room - removing consumers, producers, transports"
+        );
+        consumers = removeItems(consumers, socket.id, "consumer");
+        producers = removeItems(producers, socket.id, "producer");
+        transports = removeItems(transports, socket.id, "transport");
+
+        // const { roomName } = peers[socket.id]
+        delete peers[socket.id];
+
+        // Will find admin socket somehow later
+        // Below is temp (emit to entire room - which is only admin)
+        socket.to(roomName).emit('left-private-room')
+    });
+
+    socket.on("disconnect", () => {
+        // do some cleanup
+        console.log("peer disconnected");
+        consumers = removeItems(consumers, socket.id, "consumer");
+        producers = removeItems(producers, socket.id, "producer");
+        transports = removeItems(transports, socket.id, "transport");
+
+        // const { roomName } = peers[socket.id]
+        delete peers[socket.id];
+
+        // // remove socket from room
+        // rooms[roomName] = {
+        //   router: rooms[roomName].router,
+        //   peers: rooms[roomName].peers.filter(socketId => socketId !== socket.id)
+        // }
+    });
 });
 
 const createWebRtcTransport = async (router) => {
