@@ -80,12 +80,51 @@ export class PrivateRoom {
                         });
 
                         // add transport to Peer's properties
-                        this.addTransport(transport, this._roomId, consumer);
+                        this.addTransport(transport, consumer);
                     },
                     (error) => {
                         console.log(error);
                     }
                 );
+            }
+        );
+
+        this._socket.on("transport-connect", ({ dtlsParameters }, callback) => {
+            this.getTransport(this._socket.id).connect({ dtlsParameters });
+            callback();
+        });
+
+        this._socket.on(
+            "transport-produce",
+            async ({ kind, rtpParameters, appData }, callback) => {
+                // call produce based on the prameters from the client
+                const producer = await this.getTransport(
+                    this._socket.id
+                ).produce({
+                    kind,
+                    rtpParameters,
+                });
+
+                // add producer to the producers array
+                const { roomName } = this._roomPeers[this._socket.id];
+
+                console.log("ADDING PRODUCER");
+                this.addProducer(producer, roomName);
+
+                this.informConsumers(producer.id);
+
+                console.log("Producer ID: ", producer.id, producer.kind);
+
+                producer.on("transportclose", () => {
+                    console.log("transport for this producer closed ");
+                    producer.close();
+                });
+
+                // Send back to the client the Producer's id
+                callback({
+                    id: producer.id,
+                    producersExist: this._producers.length > 1 ? true : false,
+                });
             }
         );
     }
@@ -132,17 +171,57 @@ export class PrivateRoom {
         });
     }
 
+    informConsumers(producerId) {
+        console.log(
+            `informConsumers - just joined, id ${producerId} ${this._roomId}`
+        );
+
+        const peerSocket = Object.keys(this._roomPeers)
+            .filter((peer) => !this._roomPeers[peer].peerDetails.isAdmin)
+            .map((peer) => this._roomPeers[peer])[0]?.socket;
+
+        if (peerSocket) {
+            peerSocket.emit("new-producer", { producerId: id });
+        }
+    }
+
+    addProducer(producer) {
+        this._producers = [...this._producers, { socketId: this._socket.id, producer, roomName: this._roomId }];
+
+        this._roomPeers[this._socket.id] = {
+            ...this._roomPeers[this._socket.id],
+            producers: [...this._roomPeers[this._socket.id].producers, producer.id],
+        };
+    }
+
+    getTransport(socketId) {
+        const [producerTransport] = this._transports.filter(
+            (transport) =>
+                transport.socketId === socketId && !transport.consumer
+        );
+        console.log("HERE ARE TRANSPORTS", this._transports);
+        return producerTransport.transport;
+    }
+
     addTransport(transport, consumer) {
         console.log("addTransport()");
 
         this._transports = [
             ...this._transports,
-            { socketId: this._socket.id, transport, roomName: this._roomId, consumer },
+            {
+                socketId: this._socket.id,
+                transport,
+                roomName: this._roomId,
+                consumer,
+            },
         ];
 
         this._roomPeers[this._socket.id] = {
             ...this._roomPeers[this._socket.id],
-            transports: [...this._roomPeers[this._socket.id].transports, transport.id],
+            transports: [
+                ...this._roomPeers[this._socket.id].transports,
+                transport.id,
+            ],
         };
         console.log("TOTAL TRANSPORTS", this._transports.length);
     }
