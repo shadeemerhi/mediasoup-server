@@ -82,10 +82,9 @@ connections.on("connection", async (socket) => {
     // Private room events
     socket.on("create-private-room", async ({ roomId }, callback) => {
         console.log("CREATING PRIVATE ROOM", roomId);
-        const room = await getOrCreateRoom(roomId, socket)
-        // const room = getOrCreateRoom(roomId, socket);
+        const room = await getOrCreateRoom(roomId, socket);
 
-        console.log("HERE IS ROOM", room);
+        room.init();
 
         callback({ roomId, socketId: room?._socket.id });
     });
