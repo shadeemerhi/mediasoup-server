@@ -48,7 +48,7 @@ const getOrCreateRoom = async (roomId, socket) => {
 
     if (!room) {
         // create room
-        room = await PrivateRoom.create({ mediasoupWorker, roomId, socket });
+        room = await PrivateRoom.create({ mediasoupWorker, roomId });
 
         rooms.set(roomId, room);
     }
@@ -79,14 +79,14 @@ connections.on("connection", async (socket) => {
         socket.to(roomName).emit("left-public-room", { userId });
     });
 
-    // Private room events
-    socket.on("create-private-room", async ({ roomId }, callback) => {
-        console.log("CREATING PRIVATE ROOM", roomId);
+    // Private room
+    socket.on("private-room-request", async ({ roomId }, callback) => {
+        console.log("GETTING/CREATING PRIVATE ROOM", roomId);
         const room = await getOrCreateRoom(roomId, socket);
 
-        room.init();
+        room.init(socket);
 
-        callback({ roomId, socketId: room?._socket.id });
+        callback({ roomId });
     });
 
     socket.on("disconnect", () => {

@@ -27,7 +27,7 @@ export class PrivateRoom {
     constructor({ mediasoupRouter, roomId, socket }) {
         this._roomId = roomId;
 
-        this._socket = socket;
+        this._socket = null;
 
         this._mediasoupRouter = mediasoupRouter;
 
@@ -41,10 +41,12 @@ export class PrivateRoom {
     }
 
     // Setup socket events
-    init() {
-        console.log("INSIDE INIT LOLOLOL");
+    init(socket) {
+        this._socket = socket;
+        console.log("INSIDE INIT LOLOLOL", this._socket.id, this._roomId);
 
         this._socket.on("join-private-room", async ({ isAdmin }, callback) => {
+            console.log("INSIDE JOIN PRIVATE ROOM");
             this._socket.join(this._roomId);
 
             // Not sure if this will be used
@@ -127,6 +129,133 @@ export class PrivateRoom {
                 });
             }
         );
+
+        // Consumers
+        this._socket.on("getProducers", (callback) => {
+            const { roomName } = this._roomPeers[this._socket.id];
+
+            let producerList = [];
+            this._producers.forEach((producerData) => {
+                if (
+                    producerData.socketId !== socket.id &&
+                    producerData.roomName === roomName
+                ) {
+                    producerList = [...producerList, producerData.producer.id];
+                }
+            });
+
+            callback(producerList);
+        });
+
+        this._socket.on(
+            "consume",
+            async (
+                {
+                    rtpCapabilities,
+                    remoteProducerId,
+                    serverConsumerTransportId,
+                },
+                callback
+            ) => {
+                try {
+                    const { roomName } = this._roomPeers[socket.id];
+                    // const router = rooms[roomName].router;
+                    let consumerTransport = this._transports.find(
+                        (transportData) =>
+                            transportData.consumer &&
+                            transportData?.transport?.id ==
+                                serverConsumerTransportId
+                    )?.transport;
+
+                    // check if the router can consume the specified producer
+                    if (
+                        this._mediasoupRouter.canConsume({
+                            producerId: remoteProducerId,
+                            rtpCapabilities,
+                        })
+                    ) {
+                        console.log("REMOTE PRODUCER ID", remoteProducerId);
+                        // transport can now consume and return a consumer
+                        const consumer = await consumerTransport.consume({
+                            producerId: remoteProducerId,
+                            rtpCapabilities,
+                            paused: true,
+                        });
+
+                        consumer.on("transportclose", () => {
+                            console.log("transport close from consumer");
+                        });
+
+                        consumer.on("producerclose", () => {
+                            console.log(
+                                "producer of consumer closed",
+                                remoteProducerId
+                            );
+                            this._socket.emit("producer-closed", {
+                                consumerId: consumer.id,
+                                remoteProducerId,
+                            });
+                            consumer.close();
+                        });
+
+                        consumer.on("producerpause", () => {
+                            console.log("producer was paused hehehe");
+                            this._socket.emit("consumer-paused", {
+                                consumerId: consumer.id,
+                            });
+                        });
+
+                        consumer.on("producerresume", () => {
+                            console.log("producer was resumed hehehe");
+                            this._socket.emit("consumer-resumed", {
+                                consumerId: consumer.id,
+                            });
+                        });
+
+                        this.addConsumer(consumer);
+
+                        // from the consumer extract the following params
+                        // to send back to the Client
+                        const params = {
+                            id: consumer.id,
+                            producerId: remoteProducerId,
+                            kind: consumer.kind,
+                            rtpParameters: consumer.rtpParameters,
+                            serverConsumerId: consumer.id,
+                            producerPaused: consumer.producerPaused,
+                        };
+
+                        let adminSocket;
+                        for (const socket in this._roomPeers) {
+                            if (this._roomPeers[socket].peerDetails.isAdmin) {
+                                adminSocket = this._roomPeers[socket].socket;
+                            }
+                        }
+                        adminSocket.emit("new-consumer");
+                        // console.log("HERE IS ADMIN SOCKET", adminSocket);
+
+                        // send the parameters to the client
+                        callback({ params });
+                    }
+                } catch (error) {
+                    console.log("CONSUME EVENT ERROR", error.message);
+                    callback({
+                        params: {
+                            error: error,
+                        },
+                    });
+                }
+            }
+        );
+
+        socket.on("consumer-resume", async ({ serverConsumerId }) => {
+            console.log("consumer resume", serverConsumerId);
+            const { consumer } = this._consumers.find(
+                (consumerData) => consumerData.consumer.id === serverConsumerId
+            );
+            console.log('HERE IS CONSUMER', consumer);
+            await consumer.resume();
+        });
     }
 
     async createWebRtcTransport() {
@@ -186,11 +315,34 @@ export class PrivateRoom {
     }
 
     addProducer(producer) {
-        this._producers = [...this._producers, { socketId: this._socket.id, producer, roomName: this._roomId }];
+        this._producers = [
+            ...this._producers,
+            { socketId: this._socket.id, producer, roomName: this._roomId },
+        ];
 
         this._roomPeers[this._socket.id] = {
             ...this._roomPeers[this._socket.id],
-            producers: [...this._roomPeers[this._socket.id].producers, producer.id],
+            producers: [
+                ...this._roomPeers[this._socket.id].producers,
+                producer.id,
+            ],
+        };
+    }
+
+    addConsumer(consumer) {
+        // add the consumer to the consumers list
+        this._consumers = [
+            ...this._consumers,
+            { socketId: this._socket.id, consumer, roomName: this._roomId },
+        ];
+
+        // add the consumer id to the peers list
+        this._roomPeers[this._socket.id] = {
+            ...this._roomPeers[this._socket.id],
+            consumers: [
+                ...this._roomPeers[this._socket.id].consumers,
+                consumer.id,
+            ],
         };
     }
 
