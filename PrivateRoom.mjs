@@ -307,21 +307,31 @@ export class PrivateRoom {
         });
 
         // Cleanup - coming
-        // this._socket.on("leave-private-room", ({ roomName }) => {
-        //     console.log(
-        //         "user left private room - removing consumers, producers, transports"
-        //     );
-        //     // consumers = removeItems(consumers, socket.id, "consumer");
-        //     // producers = removeItems(producers, socket.id, "producer");
-        //     // transports = removeItems(transports, socket.id, "transport");
+        this._socket.on("leave-private-room", ({ roomName }) => {
+            console.log(
+                "user left private room - removing consumers, producers, transports"
+            );
+            this._consumers = this.removeItems(this._consumers, socket.id, "consumer");
+            this._producers = this.removeItems(this._producers, socket.id, "producer");
+            this._transports = this.removeItems(this._transports, socket.id, "transport");
     
-        //     // // const { roomName } = peers[socket.id]
-        //     // delete peers[socket.id];
+            // // const { roomName } = peers[socket.id]
+            delete this._roomPeers[this._socket.id];
     
-        //     // Will find admin socket somehow later
-        //     // Below is temp (emit to entire room - which is only admin)
-        //     // this._socket.to(roomName).emit('left-private-room')
-        // });
+            // Will find admin socket somehow later
+            // Below is temp (emit to entire room - which is only admin)
+            this._socket.to(roomName).emit('left-private-room')
+        });
+
+        this._socket.on('disconnect', () => {
+            console.log('peer disconnected - private room');
+            this._consumers = this.removeItems(this._consumers, socket.id, "consumer");
+            this._producers = this.removeItems(this._producers, socket.id, "producer");
+            this._transports = this.removeItems(this._transports, socket.id, "transport");
+    
+            // // const { roomName } = peers[socket.id]
+            delete this._roomPeers[this._socket.id];
+        })
 
     }
 
@@ -442,6 +452,28 @@ export class PrivateRoom {
             ],
         };
         console.log("TOTAL TRANSPORTS", this._transports.length);
+    }
+
+    removeItems(items, socketId, type) {
+        items.forEach((item) => {
+            if (item.socketId === this._socket.id) {
+                item[type].close();
+            }
+        });
+        items = items.filter((item) => item.socketId !== this._socket.id);
+
+        return items;
+    };
+
+    // Not being used - not sure how to best handle disconnect events for socket
+    disconnectPeer(socketId) {
+        console.log("peer disconnected - private room");
+        this._consumers = this.removeItems(this._consumers, socketId, "consumer");
+        this._producers = this.removeItems(this._producers, socketId, "producer");
+        this._transports = this.removeItems(this._transports, socketId, "transport");
+
+        // const { roomName } = peers[socket.id]
+        delete this._roomPeers[socketId];
     }
 
     close() {
