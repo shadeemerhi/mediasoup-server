@@ -7,7 +7,7 @@ import fs from "fs";
 import path from "path";
 
 import { Server } from "socket.io";
-// import { PrivateRoom } from "./PrivateRoom.mjs";
+import { PrivateRoom } from "./PrivateRoom2.mjs";
 
 const httpServer = http.createServer(app);
 httpServer.listen(4000, () => {
@@ -22,11 +22,14 @@ const connections = io.of("/mediasoup");
 
 // TEMP
 let worker;
-let rooms = {};
+// let rooms = {};
 let peers = {};
 let transports = [];
 let producers = [];
 let consumers = [];
+
+// Private rooms
+const rooms = new Map();
 
 // const mediasoupWorkers = []; // Coming soon
 
@@ -47,17 +50,17 @@ const createRoomWorker = async () => {
 // TEMP
 const mediasoupWorker = await createRoomWorker();
 
-// const getOrCreateRoom = async (roomId, socket) => {
-//     let room = rooms.get(roomId);
+const getOrCreateRoom = async (roomId) => {
+    let room = rooms.get(roomId);
 
-//     if (!room) {
-//         // create room
-//         room = await PrivateRoom.create({ mediasoupWorker, roomId });
+    if (!room) {
+        // create room
+        room = await PrivateRoom.create({ mediasoupWorker, roomId });
 
-//         rooms.set(roomId, room);
-//     }
-//     return room;
-// };
+        rooms.set(roomId, room);
+    }
+    return room;
+};
 
 // Create room router
 const createRoom = async (roomName, socketId) => {
@@ -129,25 +132,28 @@ connections.on("connection", async (socket) => {
         // Let room know user joined
         socket.to(roomName).emit("joined-private-room");
 
-        const router1 = await createRoom(roomName, socket.id);
+        // const router1 = await createRoom(roomName, socket.id);
+        const room = await getOrCreateRoom(roomName);
+        room.initSocketEvents(socket, isAdmin);
 
-        peers[socket.id] = {
-            socket,
-            roomName, // Name for the Router this Peer joined
-            transports: [],
-            producers: [],
-            consumers: [],
-            peerDetails: {
-                name: "",
-                isAdmin, // Is this Peer the Admin?
-            },
-        };
+        // peers[socket.id] = {
+        //     socket,
+        //     roomName, // Name for the Router this Peer joined
+        //     transports: [],
+        //     producers: [],
+        //     consumers: [],
+        //     peerDetails: {
+        //         name: "",
+        //         isAdmin, // Is this Peer the Admin?
+        //     },
+        // };
 
         // get Router RTP Capabilities
-        const rtpCapabilities = router1.rtpCapabilities;
+        // const rtpCapabilities = router1.rtpCapabilities;
+        const rtpCapabilities = room.getRtpCapabilities();
 
         // Init socket events
-        initSocketEvents(socket);
+        // initSocketEvents(socket);
 
         // call callback from the client and send back the rtpCapabilities
         callback({ rtpCapabilities });
