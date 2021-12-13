@@ -48,13 +48,13 @@ export class PrivateRoom {
         socket.on("join-private-room", async ({ isAdmin }, callback) => {
             console.log("INSIDE JOIN PRIVATE ROOM", this._roomId);
             socket.join(this._roomId);
-            
+
             // Not sure if this will be used
             this._peers[socket.id] = {
                 socket: socket,
                 roomName: this._roomId,
-                transports: [],
-                producers: [],
+                transports: new Map(),
+                producers: new Map(),
                 consumers: [],
                 peerDetails: {
                     name: "",
@@ -84,7 +84,12 @@ export class PrivateRoom {
                     });
 
                     // add transport to Peer's properties
-                    addTransport(transport, roomName, consumer);
+                    // this._transports.set(transport.id, transport);
+                    // this._peers[socket.id].transports.set(transport.id, transport);
+                    this._transports.push({ socketId: socket.id, transport });
+                    console.log('TRANSPORT ADDED', this._peers[socket.id]);
+
+                    // addTransport(transport, roomName, consumer);
                 },
                 (error) => {
                     console.log(error);
@@ -92,28 +97,58 @@ export class PrivateRoom {
             );
         });
 
-        socket.on("transport-connect", ({ dtlsParameters }, callback) => {
+        socket.on("transport-connect", async ({ transportId, dtlsParameters }, callback) => {
             console.log("DTLS PARAMS... ", { dtlsParameters });
 
-            getTransport(socket.id).connect({ dtlsParameters });
+            // const transport = this._transports.get(transportId);
+
+            const { transport } = this._transports.find(item => item.transport.id === transportId);
+
+            // const transport = this._peers[socket.id].transports.get(transportId);
+            console.log('FUCK FUCK FUCK', transport);
+
+            if (!transport) {
+                // handle no transport found
+            }
+
+            // getTransport(socket.id).connect({ dtlsParameters });
+            await transport.connect({ dtlsParameters });
             callback();
         });
 
         socket.on(
             "transport-produce",
-            async ({ kind, rtpParameters, appData }, callback) => {
-                const producer = await getTransport(socket.id).produce({
+            async ({ transportId, kind, rtpParameters, appData }, callback) => {
+
+                // const producer = await getTransport(socket.id).produce({
+                //     kind,
+                //     rtpParameters,
+                // });
+
+                const { transport } = this._transports.find(item => item.transport.id === transportId);
+                // const transport = this._transports.get(transportId);
+                // const transport = this._peers[socket.id].transports.get(transportId);
+                if (!transport) {
+                    // Handle no transport found
+                }
+
+                const producer = await transport.produce({
                     kind,
-                    rtpParameters,
+                    rtpParameters
                 });
 
                 // add producer to the producers array
                 const { roomName } = this._peers[socket.id];
 
                 console.log("ADDING PTRODUCE");
-                addProducer(producer, roomName);
 
-                informConsumers(roomName, socket.id, producer.id);
+                // this._peers[socket.id].producers.set(producer.id, producer);
+                this._producers.push({ socketId: socket.id, producer });
+
+                // addProducer(producer, roomName);
+
+                // informConsumers(roomName, socket.id, producer.id);
+                informConsumers(socket.id, producer.id);
 
                 console.log("Producer ID: ", producer.id, producer.kind);
 
@@ -132,14 +167,20 @@ export class PrivateRoom {
 
         socket.on(
             "transport-recv-connect",
-            async ({ dtlsParameters, serverConsumerTransportId }) => {
+            async ({ dtlsParameters, transportId }) => {
                 console.log(`DTLS PARAMS: ${dtlsParameters}`);
-                const consumerTransport = this._transports.find(
-                    (transportData) =>
-                        transportData.consumer &&
-                        transportData.transport.id == serverConsumerTransportId
-                ).transport;
-                await consumerTransport.connect({ dtlsParameters });
+                // const consumerTransport = this._transports.find(
+                //     (transportData) =>
+                //         transportData.consumer &&
+                //         transportData.transport.id == serverConsumerTransportId
+                // ).transport;
+
+                // const transport = this._transports.get(transportId);
+                // const transport = this._peers[socket.id].transports.get(transportId);
+                const { transport } = this._transports.find(item => item.transport.id === transportId);
+                await transport.connect({ dtlsParameters });
+                // await consumerTransport.connect({ dtlsParameters });
+                
             }
         );
 
@@ -147,6 +188,7 @@ export class PrivateRoom {
             "consume",
             async (
                 {
+                    transportId,
                     rtpCapabilities,
                     remoteProducerId,
                     serverConsumerTransportId,
@@ -156,12 +198,16 @@ export class PrivateRoom {
                 try {
                     const { roomName } = this._peers[socket.id];
                     // const router = rooms[roomName].router;
-                    let consumerTransport = this._transports.find(
-                        (transportData) =>
-                            transportData.consumer &&
-                            transportData?.transport?.id ==
-                                serverConsumerTransportId
-                    )?.transport;
+                    // let consumerTransport = this._transports.find(
+                    //     (transportData) =>
+                    //         transportData.consumer &&
+                    //         transportData?.transport?.id ==
+                    //             serverConsumerTransportId
+                    // )?.transport;
+
+                    // const transport = this._transports.get(transportId);
+                    // const transport = this._peers[socket.id].transports.get(transportId);
+                    const { transport } = this._transports.find(item => item.transport.id === transportId);
 
                     // check if the router can consume the specified producer
                     if (
@@ -172,7 +218,7 @@ export class PrivateRoom {
                     ) {
                         console.log("REMOTE PRODUCER ID", remoteProducerId);
                         // transport can now consume and return a consumer
-                        const consumer = await consumerTransport.consume({
+                        const consumer = await transport.consume({
                             producerId: remoteProducerId,
                             rtpCapabilities,
                             paused: true,
@@ -283,6 +329,7 @@ export class PrivateRoom {
             const producer = this._producers.find(
                 (p) => p.producer.id === producerId
             ).producer;
+
             if (!producer) {
                 callback({ error: "Producer not found" });
             }
@@ -318,14 +365,7 @@ export class PrivateRoom {
             this._producers = removeItems(this._producers, socket.id, "producer");
             this._transports = removeItems(this._transports, socket.id, "transport");
 
-            // const { roomName } = peers[socket.id]
             delete this._peers[socket.id];
-
-            // // remove socket from room
-            // rooms[roomName] = {
-            //   router: rooms[roomName].router,
-            //   peers: rooms[roomName].peers.filter(socketId => socketId !== socket.id)
-            // }
         });
 
         socket.on("getProducers", (callback) => {
@@ -333,55 +373,15 @@ export class PrivateRoom {
             const { roomName } = this._peers[socket.id];
 
             let producerList = [];
-            this._producers.forEach((producerData) => {
-                if (
-                    producerData.socketId !== socket.id &&
-                    producerData.roomName === roomName
-                ) {
-                    producerList = [...producerList, producerData.producer.id];
+            this._producers.forEach(item => {
+                if (item.socketId !== socket.id) {
+                    producerList.push(item.producer.id);
                 }
             });
 
             // return the producer list back to the client
             callback(producerList);
         });
-
-        // Resource management functions
-        const getTransport = (socketId) => {
-            const [producerTransport] = this._transports.filter(
-                (transport) =>
-                    transport.socketId === socketId && !transport.consumer
-            );
-            console.log("AFTER GETTING TRANSPORT", this._transports.length);
-            return producerTransport.transport;
-        };
-        const addTransport = (transport, roomName, consumer) => {
-            console.log("ADDING TRANSPORT", consumer);
-
-            this._transports = [
-                ...this._transports,
-                { socketId: socket.id, transport, roomName, consumer },
-            ];
-
-            this._peers[socket.id] = {
-                ...this._peers[socket.id],
-                transports: [...this._peers[socket.id].transports, transport.id],
-            };
-            console.log("TOTAL TRANSPORTS", this._transports.length);
-        };
-
-        const addProducer = (producer, roomName) => {
-            this._producers = [
-                ...this._producers,
-                { socketId: socket.id, producer, roomName },
-            ];
-            console.log("INSIDE ADD PRODUCER", this._producers);
-
-            this._peers[socket.id] = {
-                ...this._peers[socket.id],
-                producers: [...this._peers[socket.id].producers, producer.id],
-            };
-        };
 
         const addConsumer = (consumer, roomName) => {
             // add the consumer to the consumers list
@@ -397,9 +397,9 @@ export class PrivateRoom {
             };
         };
 
-        const informConsumers = (roomName, socketId, id) => {
+        const informConsumers = (socketId, producerId) => {
             console.log(
-                `informConsumers - just joined, id ${id} ${roomName}, ${socketId}`
+                `informConsumers - just joined, id ${producerId} ${this._roomId}, ${socketId}`
             );
 
             const peerSocket = Object.keys(this._peers)
@@ -407,7 +407,7 @@ export class PrivateRoom {
                 .map((peer) => this._peers[peer])[0]?.socket;
 
             if (peerSocket) {
-                peerSocket.emit("new-producer", { producerId: id });
+                peerSocket.emit("new-producer", { producerId });
             }
         };
 
