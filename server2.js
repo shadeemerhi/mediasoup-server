@@ -124,6 +124,15 @@ connections.on("connection", async (socket) => {
         socket.to(roomName).emit("left-public-room", { userId });
     });
 
+    socket.on('private-room-request', async ({ roomId, isAdmin }, callback) => {
+        console.log("GETTING/CREATING PRIVATE ROOM", roomId);
+
+        const room = await getOrCreateRoom(roomId);
+        room.initSocketEvents(socket, isAdmin);
+
+        callback({ roomId });
+    })
+
     // Private room
     socket.on("joinRoom", async ({ roomName, isAdmin }, callback) => {
         console.log("GETTING/CREATING PRIVATE ROOM", roomName);
