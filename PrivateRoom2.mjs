@@ -44,18 +44,29 @@ export class PrivateRoom {
       return this._mediasoupRouter.rtpCapabilities;
     }
 
-    initSocketEvents(socket, isAdmin) {
-        this._peers[socket.id] = {
-            socket,
-            roomName: this._roomId, // Name for the Router this Peer joined
-            transports: [],
-            producers: [],
-            consumers: [],
-            peerDetails: {
-                name: "",
-                isAdmin, // Is this Peer the Admin?
-            },
-        };
+    initSocketEvents(socket) {
+        socket.on("join-private-room", async ({ isAdmin }, callback) => {
+            console.log("INSIDE JOIN PRIVATE ROOM", this._roomId);
+            socket.join(this._roomId);
+            
+            // Not sure if this will be used
+            this._peers[socket.id] = {
+                socket: socket,
+                roomName: this._roomId,
+                transports: [],
+                producers: [],
+                consumers: [],
+                peerDetails: {
+                    name: "",
+                    isAdmin,
+                },
+            };
+
+            const rtpCapabilities = this._mediasoupRouter.rtpCapabilities;
+
+            callback({ rtpCapabilities });
+        });
+        
         socket.on("createWebRtcTransport", async ({ consumer }, callback) => {
             const roomName = this._peers[socket.id].roomName;
 

@@ -131,41 +131,6 @@ connections.on("connection", async (socket) => {
         room.initSocketEvents(socket, isAdmin);
 
         callback({ roomId });
-    })
-
-    // Private room
-    socket.on("joinRoom", async ({ roomName, isAdmin }, callback) => {
-        console.log("GETTING/CREATING PRIVATE ROOM", roomName);
-        socket.join(roomName);
-
-        // Let room know user joined
-        socket.to(roomName).emit("joined-private-room");
-
-        // const router1 = await createRoom(roomName, socket.id);
-        const room = await getOrCreateRoom(roomName);
-        room.initSocketEvents(socket, isAdmin);
-
-        // peers[socket.id] = {
-        //     socket,
-        //     roomName, // Name for the Router this Peer joined
-        //     transports: [],
-        //     producers: [],
-        //     consumers: [],
-        //     peerDetails: {
-        //         name: "",
-        //         isAdmin, // Is this Peer the Admin?
-        //     },
-        // };
-
-        // get Router RTP Capabilities
-        // const rtpCapabilities = router1.rtpCapabilities;
-        const rtpCapabilities = room.getRtpCapabilities();
-
-        // Init socket events
-        // initSocketEvents(socket);
-
-        // call callback from the client and send back the rtpCapabilities
-        callback({ rtpCapabilities });
     });
 
     socket.on("disconnect", () => {
