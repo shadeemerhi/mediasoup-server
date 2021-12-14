@@ -45,14 +45,13 @@ export class PrivateRoom {
     }
 
     initSocketEvents(socket) {
-        this._socket = socket;
-        this._socket.on("join-private-room", async ({ isAdmin }, callback) => {
+        socket.on("join-private-room", async ({ isAdmin }, callback) => {
             console.log("INSIDE JOIN PRIVATE ROOM", this._roomId);
-            this._socket.join(this._roomId);
+            socket.join(this._roomId);
 
             // Not sure if this will be used
-            this._peers[this._socket.id] = {
-                socket: this._socket,
+            this._peers[socket.id] = {
+                socket: socket,
                 roomName: this._roomId,
                 transports: new Map(),
                 producers: new Map(),
@@ -68,8 +67,10 @@ export class PrivateRoom {
             callback({ rtpCapabilities });
         });
 
-        this._socket.on("createWebRtcTransport", async ({ consumer }, callback) => {
-            const roomName = this._peers[this._socket.id].roomName;
+        socket.on("createWebRtcTransport", async ({ consumer }, callback) => {
+            const roomName = this._peers[socket.id].roomName;
+
+            // const router = rooms[roomName].router;
 
             this.createWebRtcTransport().then(
                 (transport) => {
@@ -85,8 +86,8 @@ export class PrivateRoom {
                     // add transport to Peer's properties
                     // this._transports.set(transport.id, transport);
                     // this._peers[socket.id].transports.set(transport.id, transport);
-                    this._transports.push({ socketId: this._socket.id, transport });
-                    console.log("TRANSPORT ADDED", this._peers[this._socket.id]);
+                    this._transports.push({ socketId: socket.id, transport });
+                    console.log("TRANSPORT ADDED", this._peers[socket.id]);
 
                     // addTransport(transport, roomName, consumer);
                 },
@@ -96,7 +97,7 @@ export class PrivateRoom {
             );
         });
 
-        this._socket.on(
+        socket.on(
             "transport-connect",
             async ({ transportId, dtlsParameters }, callback) => {
                 const { transport } = this._transports.find(
@@ -113,7 +114,7 @@ export class PrivateRoom {
             }
         );
 
-        this._socket.on(
+        socket.on(
             "transport-produce",
             async ({ transportId, kind, rtpParameters, appData }, callback) => {
                 const { transport } = this._transports.find(
@@ -127,9 +128,9 @@ export class PrivateRoom {
                     rtpParameters,
                 });
 
-                this._producers.push({ socketId: this._socket.id, producer });
+                this._producers.push({ socketId: socket.id, producer });
 
-                informConsumers(this._socket.id, producer.id);
+                informConsumers(socket.id, producer.id);
 
                 console.log("Producer ID: ", producer.id, producer.kind);
 
@@ -146,7 +147,7 @@ export class PrivateRoom {
             }
         );
 
-        this._socket.on(
+        socket.on(
             "consume",
             async (
                 {
@@ -185,7 +186,7 @@ export class PrivateRoom {
                                 "producer of consumer closed",
                                 remoteProducerId
                             );
-                            this._socket.emit("producer-closed", {
+                            socket.emit("producer-closed", {
                                 consumerId: consumer.id,
                                 remoteProducerId,
                             });
@@ -194,19 +195,19 @@ export class PrivateRoom {
 
                         consumer.on("producerpause", () => {
                             console.log("producer was paused hehehe");
-                            this._socket.emit("consumer-paused", {
+                            socket.emit("consumer-paused", {
                                 consumerId: consumer.id,
                             });
                         });
 
                         consumer.on("producerresume", () => {
                             console.log("producer was resumed hehehe");
-                            this._socket.emit("consumer-resumed", {
+                            socket.emit("consumer-resumed", {
                                 consumerId: consumer.id,
                             });
                         });
 
-                        this._consumers.push({ socketId: this._socket.id, consumer });
+                        this._consumers.push({ socketId: socket.id, consumer });
 
                         // from the consumer extract the following params
                         // to send back to the Client
@@ -231,6 +232,7 @@ export class PrivateRoom {
                         // send the parameters to the client
                         callback({ params });
                     }
+                    // socket.removeAllListeners('cons')
                 } catch (error) {
                     console.log("CONSUME EVENT ERROR", error.message);
                     callback({
@@ -242,7 +244,7 @@ export class PrivateRoom {
             }
         );
 
-        this._socket.on("consumer-resume", async ({ serverConsumerId }) => {
+        socket.on("consumer-resume", async ({ serverConsumerId }) => {
             console.log("consumer resume", serverConsumerId);
             const { consumer } = this._consumers.find(
                 (item) => item.consumer.id === serverConsumerId
@@ -251,7 +253,7 @@ export class PrivateRoom {
         });
 
         // New
-        this._socket.on("pauseProducer", async ({ producerId }, callback) => {
+        socket.on("pauseProducer", async ({ producerId }, callback) => {
             const { producer } = this._producers.find(
                 (item) => item.producer.id === producerId
             );
@@ -264,7 +266,7 @@ export class PrivateRoom {
             callback();
         });
 
-        this._socket.on("resumeProducer", async ({ producerId }, callback) => {
+        socket.on("resumeProducer", async ({ producerId }, callback) => {
             const { producer } = this._producers.find(
                 (p) => p.producer.id === producerId
             );
@@ -277,7 +279,7 @@ export class PrivateRoom {
             callback();
         });
 
-        this._socket.on("closeProducer", async ({ producerId }, callback) => {
+        socket.on("closeProducer", async ({ producerId }, callback) => {
             const { producer } = this._producers.find(
                 (p) => p.producer.id === producerId
             );
@@ -304,34 +306,34 @@ export class PrivateRoom {
             );
         });
 
-        this._socket.on("leave-private-room", ({ roomName }) => {
+        socket.on("leave-private-room", ({ roomName }) => {
             console.log(
                 "user left private room - removing consumers, producers, transports"
             );
             this._consumers = removeItems(
                 this._consumers,
-                this._socket.id,
+                socket.id,
                 "consumer"
             );
             this._producers = removeItems(
                 this._producers,
-                this._socket.id,
+                socket.id,
                 "producer"
             );
             this._transports = removeItems(
                 this._transports,
-                this._socket.id,
+                socket.id,
                 "transport"
             );
 
-            delete this._peers[this._socket.id];
+            delete this._peers[socket.id];
 
             // Will find admin socket somehow later
             // Below is temp (emit to entire room - which is only admin)
-            this._socket.to(roomName).emit("left-private-room");
+            socket.to(roomName).emit("left-private-room");
         });
 
-        this._socket.on("disconnect", () => {
+        socket.on("disconnect", () => {
             // do some cleanup
             console.log("peer disconnected - private room");
             this._consumers = removeItems(
@@ -350,13 +352,13 @@ export class PrivateRoom {
                 "transport"
             );
 
-            delete this._peers[this._socket.id];
+            delete this._peers[socket.id];
         });
 
-        this._socket.on("getProducers", (callback) => {
+        socket.on("getProducers", (callback) => {
             let producerList = [];
             this._producers.forEach((item) => {
-                if (item.socketId !== this._socket.id) {
+                if (item.socketId !== socket.id) {
                     producerList.push(item.producer.id);
                 }
             });
@@ -385,7 +387,7 @@ export class PrivateRoom {
                     item[type].close();
                 }
             });
-            items = items.filter((item) => item.socketId !== this._socket.id);
+            items = items.filter((item) => item.socketId !== socket.id);
 
             return items;
         };
